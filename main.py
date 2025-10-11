@@ -4,26 +4,38 @@ from torch.utils.data import random_split, DataLoader
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+from PIL import Image
+import os
 
+class UnlabeledImageDataset(torch.utils.data.Dataset):
+    def __init__(self, folder_path, transform=None):
+        self.folder_path = folder_path
+        self.transform = transform
+        self.image_files = [
+            os.path.join(folder_path, f)
+            for f in os.listdir(folder_path)
+            if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
+
+    def __len__(self):
+        return len(self.image_files)
+
+    def __getitem__(self, idx):
+        img_path = self.image_files[idx]
+        image = Image.open(img_path).convert('RGB')
+        if self.transform:
+            image = self.transform(image)
+        return image, img_path
 
 def train():
-        # import and define training/testing data
-        transform = transforms.Compose([
-            transforms.Resize((32, 32)),
-            transforms.ToTensor(),
-            transforms.Normalize((0.5, 0.5, 0.5),
-                                (0.5, 0.5, 0.5))
-        ])
-
-        # Load all images at once
+        transform = transforms.Compose([transforms.Resize((32, 32)), transforms.ToTensor(), transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
         full_dataset = datasets.ImageFolder(root='recap_imgs/images', transform=transform)
 
         train_size = int(0.5 * len(full_dataset))
         test_size = len(full_dataset) - train_size
-
-        train_dataset, test_dataset = random_split(full_dataset, [train_size, test_size])
+        train_dataset, _ = random_split(full_dataset, [train_size, test_size])
         trainloader = DataLoader(train_dataset, batch_size=4, shuffle=True, num_workers=2)
-        testloader = DataLoader(test_dataset, batch_size=4, shuffle=False, num_workers=2)
+        unlabeled_dataset = UnlabeledImageDataset('./results', transform=transform)
+        testloader = DataLoader(unlabeled_dataset, batch_size=9, shuffle=False, num_workers=2)
         classes = full_dataset.classes
         
         #define the NN
@@ -45,38 +57,39 @@ def train():
                 x = F.relu(self.fc2(x))
                 x = self.fc3(x)
                 return x
-        net = Net()
+        model = Net()
 
         criterion = nn.CrossEntropyLoss()
-        optimizer = optim.Adam(net.parameters(), lr=0.001)
+        optimizer = optim.Adam(model.parameters(), lr=0.001)
 
-        #test the data
-        for epoch in range(10):
-
+        #train the data
+        for epoch in range(12):
             for i, data in enumerate(trainloader, 0):
                 inputs, labels = data
-
                 optimizer.zero_grad()
-                outputs = net(inputs)
+                outputs = model(inputs)
                 loss = criterion(outputs, labels)
                 loss.backward()
                 optimizer.step()
             print(f'[Iteration: {epoch + 1}] Complete')
 
         print('Finished Training')
-        return testloader, classes, net
+        torch.save(model.state_dict(), './recap_model.pth')
 
-def test(x, y, net):
+        return testloader, classes, model
+
+
+def test(x, y, model):
     dataiter = iter(x)
     images, labels = next(dataiter)
 
     # Get predictions
-    outputs = net(images)
+    outputs = model(images)
     _, predicted = torch.max(outputs, 1)
 
-    print("Predicted: ", ' '.join(f'{y[predicted[j]]:5s}' for j in range(4)))
-    print("Actual:    ", ' '.join(f'{y[labels[j]]:5s}' for j in range(4)))
+    for i in range(len(labels)):
+        print(f"{labels[i]} -> {y[predicted[i]]}")
 
 if __name__ == '__main__':
-    testloader, classes, net = train()
-    test(testloader, classes, net)
+    test_dataset, classes, model = train()
+    test(test_dataset, classes, model)
